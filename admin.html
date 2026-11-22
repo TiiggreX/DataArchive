@@ -1,0 +1,145 @@
+<!doctype html>
+<html lang="es">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Registro documental · Administración</title>
+<style>
+  :root { --bg:#f2f5f7; --card:#fff; --ink:#1b2430; --mute:#5f6b7a; --line:#d6dce3; --accent:#0e6b6b; --accent-ink:#fff; --danger:#b3261e; color-scheme: light; }
+  @media (prefers-color-scheme: dark) { :root { --bg:#141a21; --card:#1c242d; --ink:#e6ebf0; --mute:#97a3b1; --line:#2d3945; --accent:#4fb3b3; --accent-ink:#0b1418; --danger:#ff8a80; color-scheme: dark; } }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--ink); font:15px/1.5 system-ui,-apple-system,"Segoe UI",sans-serif; }
+  main { max-width:960px; margin:0 auto; padding:24px 16px 64px; }
+  h1 { font-size:1.5rem; margin:0 0 4px; }
+  .sub { color:var(--mute); margin:0 0 20px; }
+  .bar { display:flex; gap:8px; flex-wrap:wrap; margin-bottom:16px; }
+  input, button { font:inherit; padding:8px 12px; border:1px solid var(--line); border-radius:6px; background:var(--card); color:var(--ink); }
+  input { flex:1; min-width:180px; }
+  button { cursor:pointer; }
+  button.primary { background:var(--accent); color:var(--accent-ink); border-color:var(--accent); }
+  button.del { color:var(--danger); }
+  :focus-visible { outline:2px solid var(--accent); outline-offset:2px; }
+  .stats { display:flex; gap:32px; margin:0 0 20px; }
+  .stats b { display:block; font-size:1.6rem; }
+  .stats span { color:var(--mute); font-size:.85rem; }
+  .wrap { overflow-x:auto; background:var(--card); border:1px solid var(--line); border-radius:8px; }
+  table { width:100%; border-collapse:collapse; }
+  th, td { text-align:left; padding:10px 14px; border-bottom:1px solid var(--line); white-space:nowrap; }
+  th { color:var(--mute); font-weight:600; font-size:.85rem; }
+  tr:last-child td { border-bottom:0; }
+  td.name { white-space:normal; word-break:break-word; }
+  td.act { text-align:right; }
+  td.act button { margin-left:6px; padding:4px 10px; }
+  #msg { min-height:1.5em; margin:12px 0; }
+  #msg.err { color:var(--danger); }
+  .empty { padding:28px; text-align:center; color:var(--mute); }
+</style>
+</head>
+<body>
+<main>
+  <h1>Documentos</h1>
+  <p class="sub">Administra los archivos guardados en el registro.</p>
+
+  <div class="bar">
+    <input id="key" type="password" placeholder="Clave de administrador" autocomplete="off">
+    <button class="primary" id="enter">Entrar</button>
+  </div>
+
+  <div id="msg" role="status"></div>
+
+  <div id="app" hidden>
+    <div class="stats">
+      <div><b id="s-total">–</b><span>documentos</span></div>
+      <div><b id="s-size">–</b><span>almacenados</span></div>
+      <div><b id="s-day">–</b><span>subidos en 24 h</span></div>
+    </div>
+    <div class="bar">
+      <input id="q" type="search" placeholder="Buscar por inicio del nombre">
+      <button id="search">Buscar</button>
+      <button class="primary" id="upload">Subir archivo</button>
+      <input id="file" type="file" hidden>
+    </div>
+    <div class="wrap">
+      <table>
+        <thead><tr><th>Nombre</th><th>Tamaño</th><th>Fecha</th><th></th></tr></thead>
+        <tbody id="rows"></tbody>
+      </table>
+    </div>
+  </div>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+let key = sessionStorage.getItem('adminKey') || '';
+const fmt = (b) => b < 1024 ? b + ' B' : b < 1048576 ? (b/1024).toFixed(1) + ' KB' : b < 1073741824 ? (b/1048576).toFixed(1) + ' MB' : (b/1073741824).toFixed(2) + ' GB';
+const say = (t, err) => { $('msg').textContent = t; $('msg').className = err ? 'err' : ''; };
+
+async function api(path, opts = {}) {
+  const r = await fetch(path, { ...opts, headers: { 'x-api-key': key, ...(opts.headers || {}) } });
+  if (!r.ok) throw new Error((await r.json().catch(() => ({}))).error || 'Error ' + r.status);
+  return r;
+}
+
+async function load() {
+  const [st, list] = await Promise.all([
+    api('/api/admin/stats').then((r) => r.json()),
+    api('/api/documents?limit=100&q=' + encodeURIComponent($('q').value.trim())).then((r) => r.json()),
+  ]);
+  $('s-total').textContent = st.total; $('s-size').textContent = fmt(st.bytes); $('s-day').textContent = st.last24h;
+  const body = $('rows'); body.replaceChildren();
+  if (!list.length) {
+    const td = Object.assign(document.createElement('td'), { colSpan: 4, className: 'empty', textContent: 'No hay documentos. Sube el primero con “Subir archivo”.' });
+    const tr = document.createElement('tr'); tr.append(td); body.append(tr);
+    return;
+  }
+  for (const d of list) {
+    const tr = document.createElement('tr');
+    const cells = [d.name, fmt(d.size), new Date(d.created_at).toLocaleString()];
+    cells.forEach((t, i) => tr.append(Object.assign(document.createElement('td'), { textContent: t, className: i ? '' : 'name' })));
+    const act = Object.assign(document.createElement('td'), { className: 'act' });
+    const dl = Object.assign(document.createElement('button'), { textContent: 'Descargar' });
+    const rm = Object.assign(document.createElement('button'), { textContent: 'Eliminar', className: 'del' });
+    dl.onclick = () => download(d);
+    rm.onclick = () => remove(d);
+    act.append(dl, rm); tr.append(act); body.append(tr);
+  }
+}
+
+async function download(d) {
+  try {
+    const blob = await (await api('/api/documents/' + d.id)).blob();
+    const a = Object.assign(document.createElement('a'), { href: URL.createObjectURL(blob), download: d.name });
+    a.click(); URL.revokeObjectURL(a.href);
+  } catch (e) { say(e.message, true); }
+}
+
+async function remove(d) {
+  if (!confirm(`¿Eliminar “${d.name}”? No se puede deshacer.`)) return;
+  try { await api('/api/documents/' + d.id, { method: 'DELETE' }); say('Eliminado: ' + d.name); await load(); }
+  catch (e) { say(e.message, true); }
+}
+
+$('upload').onclick = () => $('file').click();
+$('file').onchange = async (e) => {
+  const f = e.target.files[0]; if (!f) return;
+  say('Subiendo ' + f.name + '…');
+  try {
+    const r = await (await api('/api/documents?name=' + encodeURIComponent(f.name), { method: 'POST', body: f, headers: { 'content-type': f.type || 'application/octet-stream' } })).json();
+    say(r.duplicate ? `Ya existía como “${r.name}”.` : 'Subido: ' + f.name);
+    await load();
+  } catch (err) { say(err.message, true); }
+  e.target.value = '';
+};
+$('search').onclick = () => load().catch((e) => say(e.message, true));
+$('q').onkeydown = (e) => { if (e.key === 'Enter') $('search').click(); };
+
+async function enter() {
+  key = $('key').value || key;
+  try { await load(); sessionStorage.setItem('adminKey', key); $('app').hidden = false; say(''); }
+  catch (e) { $('app').hidden = true; say(e.message, true); }
+}
+$('enter').onclick = enter;
+$('key').onkeydown = (e) => { if (e.key === 'Enter') enter(); };
+if (key) enter();
+</script>
+</body>
+</html>

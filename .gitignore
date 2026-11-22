@@ -1,0 +1,9 @@
+#Carpetas de configuración
+/data
+/meta
+
+#pre-configuraciones de accesos
+.env.example
+.env
+garage.toml
+docker-composer.yml
